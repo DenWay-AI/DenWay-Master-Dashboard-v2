@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import DateRangePicker from '@/components/DateRangePicker'
 import LoadingState from '@/components/ui/LoadingState'
 import { Modal, ModalHeader, ModalBody, ModalCloseButton } from '@/components/ui/Modal'
@@ -8,7 +8,7 @@ import {
   fmtCurrency, fmtCurrencyDec, fmtInt, fmtPct, fmtRateInt,
 } from '@/lib/formatters'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 
 interface AdMetrics {
   spend: number; impressions: number; reach: number; clicks: number
@@ -45,141 +45,20 @@ interface BreakdownData {
   lastSynced: string | null
 }
 
-// ── Column definitions ────────────────────────────────────────────────────────
+type ViewBy = 'ad' | 'adset' | 'campaign'
+type SortDir = 'asc' | 'desc'
 
-interface ColDef {
-  key: keyof AdMetrics
-  label: string
-  hint: string
-  fmt: (v: any) => string
-  group: 'delivery' | 'leads' | 'booking' | 'show' | 'qualify' | 'revenue'
-  width: number
-  hideable?: boolean
+interface FlatRow extends AdMetrics {
+  primaryName: string
+  campaignName: string
+  adsetName: string | null
+  adId?: string | null
+  status?: string | null
+  effectiveStatus?: string | null
+  isActive: boolean
+  adRef?: AdRow
+  key: string
 }
-
-const COLS: ColDef[] = [
-  // Delivery
-  { key: 'spend',           label: 'Spend',      hint: 'Total ad spend',                  fmt: fmtCurrency,     group: 'delivery', width: 86 },
-  { key: 'impressions',     label: 'Impr.',       hint: 'Impressions',                     fmt: fmtInt,          group: 'delivery', width: 80,  hideable: true },
-  { key: 'cpm',             label: 'CPM',         hint: 'Cost per 1 000 impressions',      fmt: fmtCurrencyDec,  group: 'delivery', width: 76,  hideable: true },
-  { key: 'clicks',          label: 'Clicks',      hint: 'Link clicks',                     fmt: fmtInt,          group: 'delivery', width: 70,  hideable: true },
-  { key: 'ctr',             label: 'CTR',         hint: 'Click-through rate',              fmt: fmtPct,          group: 'delivery', width: 68,  hideable: true },
-  // Leads
-  { key: 'leads',           label: 'Leads',       hint: 'CRM contacts attributed to ad',   fmt: fmtInt,          group: 'leads',    width: 64 },
-  { key: 'cpl',             label: 'CPL',         hint: 'Cost per lead',                   fmt: fmtCurrencyDec,  group: 'leads',    width: 76 },
-  // Booking
-  { key: 'booked',          label: 'Booked',      hint: 'Calls booked',                    fmt: fmtInt,          group: 'booking',  width: 68 },
-  { key: 'leadToBookRate',  label: 'L→B%',        hint: 'Lead to booking rate',            fmt: v => fmtRateInt(v), group: 'booking', width: 66 },
-  { key: 'costPerBooking',  label: '$/Book',      hint: 'Cost per booked call',            fmt: fmtCurrencyDec,  group: 'booking',  width: 78 },
-  // Show
-  { key: 'shows',           label: 'Shows',       hint: 'Calls that showed up',            fmt: fmtInt,          group: 'show',     width: 62 },
-  { key: 'showRate',        label: 'Show%',       hint: 'Show rate (shows / booked)',      fmt: v => fmtRateInt(v), group: 'show',   width: 68 },
-  // Qualify
-  { key: 'qualified',       label: 'Qual.',       hint: 'Qualified calls',                 fmt: fmtInt,          group: 'qualify',  width: 58 },
-  { key: 'costPerQualified',label: '$/Qual.',     hint: 'Cost per qualified call',         fmt: fmtCurrencyDec,  group: 'qualify',  width: 78 },
-  { key: 'avgLeadQuality',  label: '★ Qual',      hint: 'Avg lead quality score (rated calls)', fmt: v => v != null ? (v as number).toFixed(1) : '—', group: 'qualify', width: 68 },
-  // Revenue
-  { key: 'closed',          label: 'Closed',      hint: 'Deals closed',                    fmt: fmtInt,          group: 'revenue',  width: 62 },
-  { key: 'outcomeFollowUp', label: 'Follow-Up',   hint: 'Follow-up outcomes',              fmt: fmtInt,          group: 'revenue',  width: 76 },
-  { key: 'closeRate',       label: 'Close%',      hint: 'Close rate (closed / qualified)', fmt: v => fmtRateInt(v), group: 'revenue', width: 70 },
-  { key: 'cashCollected',   label: 'Cash',        hint: 'Cash collected from closed deals',fmt: fmtCurrency,     group: 'revenue',  width: 84 },
-  { key: 'contractRevenue', label: 'Revenue',     hint: 'Contract revenue from closed deals', fmt: fmtCurrency,  group: 'revenue',  width: 86 },
-  { key: 'roas',            label: 'ROAS',        hint: 'Return on ad spend (revenue/spend)', fmt: v => v != null ? `${(v as number).toFixed(2)}×` : '—', group: 'revenue', width: 70 },
-]
-
-const GROUP_STYLES: Record<string, { color: string; bg: string }> = {
-  delivery: { color: 'var(--ink-faint)',  bg: 'transparent' },
-  leads:    { color: '#60a5fa',           bg: 'rgba(59,130,246,0.06)' },
-  booking:  { color: '#34d399',           bg: 'rgba(52,211,153,0.06)' },
-  show:     { color: '#86efac',           bg: 'rgba(134,239,172,0.05)' },
-  qualify:  { color: '#fbbf24',           bg: 'rgba(251,191,36,0.06)' },
-  revenue:  { color: '#f59e0b',           bg: 'rgba(245,158,11,0.07)' },
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function StatusDot({ isActive, status }: { isActive: boolean; status: string | null }) {
-  const color = isActive ? '#22c55e' : status === 'DELETED' || status === 'ARCHIVED' ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.3)'
-  const title = status ?? (isActive ? 'Active' : 'Paused')
-  return (
-    <span title={title} style={{
-      display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-      background: color, flexShrink: 0, marginRight: 6,
-    }} />
-  )
-}
-
-function MetricCell({ value, col, dim = false }: { value: any; col: ColDef; dim?: boolean }) {
-  const g = GROUP_STYLES[col.group]
-  const formatted = col.fmt(value)
-  const isZero = formatted === '—' || value === 0
-  return (
-    <td
-      title={col.hint}
-      style={{
-        padding: '7px 10px',
-        textAlign: 'right',
-        fontSize: '0.78rem',
-        fontVariantNumeric: 'tabular-nums',
-        whiteSpace: 'nowrap',
-        color: isZero ? 'var(--ink-faint)' : dim ? 'var(--ink-muted)' : g.color !== 'var(--ink-faint)' ? g.color : 'var(--ink-muted)',
-        background: g.bg,
-        opacity: dim && !isZero ? 0.6 : 1,
-        borderBottom: '1px solid rgba(255,255,255,0.035)',
-      }}
-    >
-      {formatted}
-    </td>
-  )
-}
-
-function fmtSynced(iso: string | null): string {
-  if (!iso) return 'Never synced'
-  const d = new Date(iso)
-  const mins = Math.round((Date.now() - d.getTime()) / 60000)
-  if (mins < 1)  return 'Just synced'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.round(mins / 60)
-  if (hrs < 24)  return `${hrs}h ago`
-  return `${Math.round(hrs / 24)}d ago`
-}
-
-// ── KPI grid (Regas pattern: 6 big glass cards, each with sub-line) ──────────
-
-function KpiGrid({ t }: { t: AdMetrics }) {
-  const items: { label: string; value: string; sub?: string }[] = [
-    { label: 'Ad Spend',       value: fmtCurrency(t.spend) },
-    { label: 'Leads',          value: fmtInt(t.leads),        sub: `CPL ${fmtCurrencyDec(t.cpl)}` },
-    { label: 'Booked Calls',   value: fmtInt(t.booked),       sub: `${fmtCurrencyDec(t.costPerBooking)} per booking` },
-    { label: 'Shows',          value: fmtInt(t.shows),        sub: t.showRate != null ? `${fmtRateInt(t.showRate)} show rate` : undefined },
-    { label: 'Closes',         value: fmtInt(t.closed),       sub: t.closeRate != null ? `${fmtRateInt(t.closeRate)} close rate` : undefined },
-    { label: 'Cash Collected', value: fmtCurrency(t.cashCollected), sub: t.roas != null ? `ROAS ${t.roas.toFixed(2)}×` : undefined },
-  ]
-
-  return (
-    <div className="kpi-grid">
-      {items.map(it => (
-        <div key={it.label} className="glass-card glass-card-lift" style={{ padding: '20px 20px' }}>
-          <span className="kpi-label">{it.label}</span>
-          <div className="kpi-value" style={{ marginTop: 12 }}>{it.value}</div>
-          {it.sub && (
-            <span style={{
-              display: 'block', marginTop: 6,
-              fontSize: '0.6875rem', color: 'var(--ink-muted)',
-              letterSpacing: '0.04em',
-            }}>
-              {it.sub}
-            </span>
-          )}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// ── Breakdown table ───────────────────────────────────────────────────────────
-
-// ── Ad detail modal ───────────────────────────────────────────────────────────
 
 interface SelectedAd {
   adName: string; adsetName: string; campaignName: string
@@ -202,10 +81,107 @@ interface SalesRecord {
   contract_value: number | null; lead_quality_score: number | null; closer: string | null
 }
 
+// ── Column definitions (for the sortable table) ──────────────────────────────
+
+interface ColDef {
+  key: keyof AdMetrics
+  label: string
+  fmt: (v: any) => string
+  emphasizeIfNonZero?: boolean       // bold value when > 0 (e.g. Closes, Cash)
+  color?: 'positive-if-gt-1' | 'positive-if-nonzero' | 'muted'
+}
+
+const COLS: ColDef[] = [
+  { key: 'spend',          label: 'Spend',   fmt: fmtCurrency },
+  { key: 'cpm',            label: 'CPM',     fmt: (v) => v != null ? `$${(v as number).toFixed(1)}` : '—', color: 'muted' },
+  { key: 'ctr',            label: 'CTR',     fmt: fmtPct, color: 'muted' },
+  { key: 'leads',          label: 'Leads',   fmt: fmtInt },
+  { key: 'cpl',            label: 'CPL',     fmt: fmtCurrencyDec },
+  { key: 'booked',         label: 'Booked',  fmt: fmtInt },
+  { key: 'costPerBooking', label: '$/Book',  fmt: fmtCurrencyDec },
+  { key: 'shows',          label: 'Shows',   fmt: fmtInt },
+  { key: 'showRate',       label: 'Show%',   fmt: (v) => v != null ? fmtRateInt(v) : '—' },
+  { key: 'closed',         label: 'Closes',  fmt: fmtInt, emphasizeIfNonZero: true },
+  { key: 'closeRate',      label: 'Close%',  fmt: (v) => v != null ? fmtRateInt(v) : '—' },
+  { key: 'cashCollected',  label: 'Cash',    fmt: fmtCurrency, emphasizeIfNonZero: true, color: 'positive-if-nonzero' },
+  { key: 'contractRevenue',label: 'Revenue', fmt: fmtCurrency, color: 'positive-if-nonzero' },
+  { key: 'roas',           label: 'ROAS',    fmt: (v) => v != null ? `${(v as number).toFixed(2)}×` : '—', color: 'positive-if-gt-1' },
+]
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 function fmtDateShort(s: string | null | undefined) {
   if (!s) return '—'
   return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
 }
+
+function fmtSynced(iso: string | null): string {
+  if (!iso) return 'Never synced'
+  const d = new Date(iso)
+  const mins = Math.round((Date.now() - d.getTime()) / 60000)
+  if (mins < 1)  return 'Just synced'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24)  return `${hrs}h ago`
+  return `${Math.round(hrs / 24)}d ago`
+}
+
+function datePresets() {
+  const today = new Date()
+  const iso   = (d: Date) => d.toISOString().split('T')[0]
+  const sub   = (days: number) => { const d = new Date(today); d.setDate(d.getDate() - days); return iso(d) }
+  return [
+    { label: '7d',    from: sub(6),                                                            to: iso(today) },
+    { label: '14d',   from: sub(13),                                                           to: iso(today) },
+    { label: '30d',   from: sub(29),                                                           to: iso(today) },
+    { label: 'Mo',    from: iso(new Date(today.getFullYear(), today.getMonth(), 1)),           to: iso(today) },
+    { label: 'All',   from: '2020-01-01',                                                      to: iso(today) },
+  ]
+}
+
+function metricColor(col: ColDef, value: any): string | undefined {
+  if (col.color === 'positive-if-gt-1') {
+    if (value == null) return undefined
+    return (value as number) >= 1 ? 'var(--positive)' : 'var(--negative)'
+  }
+  if (col.color === 'positive-if-nonzero') {
+    return (value as number) > 0 ? 'var(--positive)' : undefined
+  }
+  if (col.color === 'muted') return 'var(--ink-muted)'
+  return undefined
+}
+
+// ── KPI grid ─────────────────────────────────────────────────────────────────
+
+function KpiGrid({ t }: { t: AdMetrics }) {
+  const items: { label: string; value: string; sub?: string }[] = [
+    { label: 'Ad Spend',       value: fmtCurrency(t.spend) },
+    { label: 'Leads',          value: fmtInt(t.leads),        sub: `CPL ${fmtCurrencyDec(t.cpl)}` },
+    { label: 'Booked Calls',   value: fmtInt(t.booked),       sub: `${fmtCurrencyDec(t.costPerBooking)} per booking` },
+    { label: 'Shows',          value: fmtInt(t.shows),        sub: t.showRate != null ? `${fmtRateInt(t.showRate)} show rate` : undefined },
+    { label: 'Closes',         value: fmtInt(t.closed),       sub: t.closeRate != null ? `${fmtRateInt(t.closeRate)} close rate` : undefined },
+    { label: 'Cash Collected', value: fmtCurrency(t.cashCollected), sub: t.roas != null ? `ROAS ${t.roas.toFixed(2)}×` : undefined },
+  ]
+  return (
+    <div className="kpi-grid">
+      {items.map(it => (
+        <div key={it.label} className="glass-card glass-card-lift" style={{ padding: '20px 20px' }}>
+          <span className="kpi-label">{it.label}</span>
+          <div className="kpi-value" style={{ marginTop: 12 }}>{it.value}</div>
+          {it.sub && (
+            <span style={{
+              display: 'block', marginTop: 6,
+              fontSize: '0.6875rem', color: 'var(--ink-muted)',
+              letterSpacing: '0.04em',
+            }}>{it.sub}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Ad detail modal ──────────────────────────────────────────────────────────
 
 const SHOW_COLORS: Record<string, string> = {
   Showed: '#22c55e', 'No Show': '#ef4444', Cancelled: 'var(--ink-faint)',
@@ -215,11 +191,13 @@ const OUTCOME_COLORS: Record<string, string> = {
   Closed: '#22c55e', 'Follow-up': '#60a5fa', 'No Sale': 'var(--ink-faint)', Unqualified: 'var(--ink-faint)',
 }
 
-function Badge({ label, color }: { label: string; color: string }) {
+function Pill({ label, color }: { label: string; color: string }) {
   return (
-    <span style={{ fontSize: '0.65rem', fontWeight: 700, color, border: `1px solid ${color}`, borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', opacity: 0.85 }}>
-      {label}
-    </span>
+    <span style={{
+      fontSize: '0.6875rem', fontWeight: 600, color, letterSpacing: '0.02em',
+      border: `1px solid ${color}`, background: 'transparent',
+      borderRadius: 4, padding: '2px 7px', whiteSpace: 'nowrap',
+    }}>{label}</span>
   )
 }
 
@@ -249,23 +227,14 @@ function AdDetailModal({ ad, dateFrom, dateTo, onClose, onAnyDeleted }: AdDetail
   async function deleteContact(id: string) {
     setDeleting(id)
     const res = await fetch(`/api/b2b-ads/contacts/${id}`, { method: 'DELETE' })
-    if (res.ok) {
-      setContacts(prev => prev.filter(c => c.id !== id))
-      onAnyDeleted()
-    }
-    setDeleting(null)
-    setConfirmId(null)
+    if (res.ok) { setContacts(prev => prev.filter(c => c.id !== id)); onAnyDeleted() }
+    setDeleting(null); setConfirmId(null)
   }
-
   async function deleteSale(id: string) {
     setDeleting(id)
     const res = await fetch(`/api/b2b-ads/sales/${id}`, { method: 'DELETE' })
-    if (res.ok) {
-      setSales(prev => prev.filter(s => s.id !== id))
-      onAnyDeleted()
-    }
-    setDeleting(null)
-    setConfirmId(null)
+    if (res.ok) { setSales(prev => prev.filter(s => s.id !== id)); onAnyDeleted() }
+    setDeleting(null); setConfirmId(null)
   }
 
   function DeleteBtn({ id, onConfirm }: { id: string; onConfirm: () => void }) {
@@ -282,8 +251,7 @@ function AdDetailModal({ ad, dateFrom, dateTo, onClose, onAnyDeleted }: AdDetail
           background: isConfirming ? 'rgba(239,68,68,0.12)' : 'transparent',
           color: isConfirming ? '#ef4444' : 'var(--ink-faint)',
           cursor: isDeleting ? 'default' : 'pointer',
-          transition: 'all 120ms', whiteSpace: 'nowrap',
-          opacity: isDeleting ? 0.4 : 1,
+          transition: 'all 120ms', whiteSpace: 'nowrap', opacity: isDeleting ? 0.4 : 1,
         }}
       >
         {isDeleting ? '…' : isConfirming ? 'Sure?' : '×'}
@@ -292,289 +260,185 @@ function AdDetailModal({ ad, dateFrom, dateTo, onClose, onAnyDeleted }: AdDetail
   }
 
   const m = ad.metrics
+  const dotColor = ad.isActive ? 'var(--positive)' : 'rgba(255,255,255,0.3)'
 
   return (
     <Modal onClose={onClose} maxWidth={960}>
       <ModalHeader>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.13em', color: 'var(--ink-faint)', marginBottom: 4 }}>
-                {ad.campaignName} · {ad.adsetName}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <StatusDot isActive={ad.isActive} status={ad.status} />
-                <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {ad.adName}
-                </span>
-              </div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.13em', color: 'var(--ink-faint)', marginBottom: 4 }}>
+              {ad.campaignName} · {ad.adsetName}
             </div>
-            <ModalCloseButton onClose={onClose} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.125rem', fontWeight: 700, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {ad.adName}
+              </span>
+            </div>
           </div>
+          <ModalCloseButton onClose={onClose} />
+        </div>
 
-          {/* Metrics strip */}
-          <div style={{ display: 'flex', gap: 0, marginTop: 14, background: 'var(--surface-2)', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--line)' }}>
-            {[
-              { label: 'Spend',       value: fmtCurrency(m.spend),                              note: 'Meta',    color: 'var(--ink)' },
-              { label: 'Leads',       value: fmtInt(m.leads),                                   note: 'GHL UTM', color: '#60a5fa' },
-              { label: 'CPL',         value: fmtCurrencyDec(m.cpl),                             note: 'GHL UTM', color: '#60a5fa' },
-              { label: 'Booked',      value: fmtInt(m.booked),                                  note: 'GHL UTM', color: '#34d399' },
-              { label: 'Shows',       value: `${fmtInt(m.shows)} · ${m.showRate != null ? fmtRateInt(m.showRate) : '—'}`, note: 'GHL UTM', color: '#86efac' },
-              { label: 'Qualified',   value: fmtInt(m.qualified),                               note: 'GHL UTM', color: '#fbbf24' },
-              { label: 'Closed',      value: `${fmtInt(m.closed)} · ${m.closeRate != null ? fmtRateInt(m.closeRate) : '—'}`, note: 'GHL UTM', color: '#f59e0b' },
-              { label: 'Revenue',     value: fmtCurrency(m.contractRevenue),                    note: 'GHL UTM', color: '#f59e0b' },
-            ].map((k, i, arr) => (
-              <div key={k.label} style={{ flex: 1, padding: '9px 12px', borderRight: i < arr.length - 1 ? '1px solid var(--line)' : 'none' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-                  <span style={{ fontSize: '0.54rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-faint)' }}>{k.label}</span>
-                  <span style={{ fontSize: '0.48rem', fontWeight: 600, color: k.note === 'Meta' ? 'rgba(255,255,255,0.25)' : 'rgba(96,165,250,0.5)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{k.note}</span>
-                </div>
-                <div style={{ fontSize: '0.9rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: k.color }}>{k.value}</div>
-              </div>
-            ))}
-          </div>
+        {/* Metric strip */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginTop: 14,
+          background: 'var(--surface-2)', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--line)',
+        }}>
+          {[
+            { label: 'Spend',   value: fmtCurrency(m.spend) },
+            { label: 'Leads',   value: `${fmtInt(m.leads)} · CPL ${fmtCurrencyDec(m.cpl)}` },
+            { label: 'Booked',  value: `${fmtInt(m.booked)} · ${fmtCurrencyDec(m.costPerBooking)}/bk` },
+            { label: 'Shows',   value: `${fmtInt(m.shows)} · ${m.showRate != null ? fmtRateInt(m.showRate) : '—'}` },
+            { label: 'Closes',  value: `${fmtInt(m.closed)} · ${m.closeRate != null ? fmtRateInt(m.closeRate) : '—'}` },
+            { label: 'ROAS',    value: m.roas != null ? `${m.roas.toFixed(2)}×` : '—' },
+          ].map((k, i, arr) => (
+            <div key={k.label} style={{ padding: '10px 12px', borderRight: i < arr.length - 1 ? '1px solid var(--line)' : 'none' }}>
+              <div style={{ fontSize: '0.5625rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-faint)', marginBottom: 4 }}>{k.label}</div>
+              <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--ink)', fontVariantNumeric: 'tabular-nums' }}>{k.value}</div>
+            </div>
+          ))}
+        </div>
       </ModalHeader>
 
       <ModalBody>
-          {loading ? (
-            <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--ink-faint)', fontSize: '0.8rem' }}>Loading leads…</div>
-          ) : (
-            <>
-              {/* Leads from GHL */}
-              <div style={{ marginBottom: 28 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: '#60a5fa' }}>
-                    Leads · GHL UTM
-                  </span>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--ink-faint)' }}>{contacts.length} contacts attributed to this ad</span>
-                </div>
-                {contacts.length === 0 ? (
-                  <div style={{ padding: '20px', textAlign: 'center', fontSize: '0.8rem', color: 'var(--ink-faint)', background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--line)' }}>
-                    No contacts found for this ad in the selected period
-                  </div>
-                ) : (
-                  <div style={{ border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ background: 'var(--surface-2)' }}>
-                          {['Name', 'Company', 'Date Added', 'Pipeline Stage', ''].map(h => (
-                            <th key={h} style={{ padding: '7px 12px', textAlign: 'left', fontSize: '0.575rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-faint)', borderBottom: '1px solid var(--line)', whiteSpace: 'nowrap' }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {contacts.map((c, i) => (
-                          <tr key={c.id} style={{ borderBottom: i < contacts.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-                            <td style={{ padding: '8px 12px', fontSize: '0.8rem', color: 'var(--ink)', fontWeight: 500 }}>{c.full_name || '—'}</td>
-                            <td style={{ padding: '8px 12px', fontSize: '0.8rem', color: 'var(--ink-muted)' }}>{c.company_name || '—'}</td>
-                            <td style={{ padding: '8px 12px', fontSize: '0.78rem', color: 'var(--ink-faint)', whiteSpace: 'nowrap' }}>{fmtDateShort(c.date_added)}</td>
-                            <td style={{ padding: '8px 12px', fontSize: '0.78rem', color: 'var(--ink-muted)' }}>{c.pipeline_stage || '—'}</td>
-                            <td style={{ padding: '6px 12px', textAlign: 'right' }}>
-                              <DeleteBtn id={c.id} onConfirm={() => deleteContact(c.id)} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+        {loading ? (
+          <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--ink-faint)', fontSize: '0.8rem' }}>Loading leads…</div>
+        ) : (
+          <>
+            {/* Leads from GHL */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <span className="section-title" style={{ fontSize: '0.9375rem' }}>Leads</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--ink-faint)' }}>{contacts.length} attributed via GHL UTM</span>
               </div>
+              {contacts.length === 0 ? (
+                <div className="glass-card" style={{ padding: 20, textAlign: 'center', fontSize: '0.8rem', color: 'var(--ink-faint)' }}>
+                  No contacts found for this ad in the selected period
+                </div>
+              ) : (
+                <div className="glass-card" style={{ overflow: 'auto' }}>
+                  <table className="table-glass">
+                    <thead>
+                      <tr>
+                        <th>Name</th><th>Company</th><th>Date Added</th><th>Pipeline Stage</th><th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {contacts.map(c => (
+                        <tr key={c.id}>
+                          <td style={{ fontWeight: 500 }}>{c.full_name || '—'}</td>
+                          <td style={{ color: 'var(--ink-muted)' }}>{c.company_name || '—'}</td>
+                          <td style={{ color: 'var(--ink-faint)' }}>{fmtDateShort(c.date_added)}</td>
+                          <td style={{ color: 'var(--ink-muted)' }}>{c.pipeline_stage || '—'}</td>
+                          <td style={{ textAlign: 'right' }}><DeleteBtn id={c.id} onConfirm={() => deleteContact(c.id)} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
 
-              {/* Sales calls */}
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: '#34d399' }}>
-                    Booked Calls · GHL UTM
-                  </span>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--ink-faint)' }}>{sales.length} calls attributed to this ad</span>
-                </div>
-                {sales.length === 0 ? (
-                  <div style={{ padding: '20px', textAlign: 'center', fontSize: '0.8rem', color: 'var(--ink-faint)', background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--line)' }}>
-                    No calls found for this ad in the selected period
-                  </div>
-                ) : (
-                  <div style={{ border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ background: 'var(--surface-2)' }}>
-                          {['Name', 'Company', 'Booked', 'Show', 'Quality', 'Outcome', 'Cash', ''].map(h => (
-                            <th key={h} style={{ padding: '7px 12px', textAlign: 'left', fontSize: '0.575rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--ink-faint)', borderBottom: '1px solid var(--line)', whiteSpace: 'nowrap' }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sales.map((s, i) => (
-                          <tr key={s.id} style={{ borderBottom: i < sales.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-                            <td style={{ padding: '8px 12px', fontSize: '0.8rem', color: 'var(--ink)', fontWeight: 500, whiteSpace: 'nowrap' }}>{s.lead_name || '—'}</td>
-                            <td style={{ padding: '8px 12px', fontSize: '0.8rem', color: 'var(--ink-muted)' }}>{s.company_name || '—'}</td>
-                            <td style={{ padding: '8px 12px', fontSize: '0.78rem', color: 'var(--ink-faint)', whiteSpace: 'nowrap' }}>{fmtDateShort(s.date_booked)}</td>
-                            <td style={{ padding: '8px 12px' }}>
-                              {s.show_status
-                                ? <Badge label={s.show_status} color={SHOW_COLORS[s.show_status] ?? 'var(--ink-muted)'} />
-                                : <span style={{ color: 'var(--ink-faint)', fontSize: '0.78rem' }}>—</span>}
-                            </td>
-                            <td style={{ padding: '8px 12px', fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums', color: s.lead_quality_score != null ? '#fbbf24' : 'var(--ink-faint)', whiteSpace: 'nowrap' }}>
-                              {s.lead_quality_score != null ? `★ ${s.lead_quality_score}` : '—'}
-                            </td>
-                            <td style={{ padding: '8px 12px' }}>
-                              {s.call_outcome
-                                ? <Badge label={s.call_outcome} color={OUTCOME_COLORS[s.call_outcome] ?? 'var(--ink-muted)'} />
-                                : <span style={{ color: 'var(--ink-faint)', fontSize: '0.78rem' }}>—</span>}
-                            </td>
-                            <td style={{ padding: '8px 12px', fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums', color: s.cash_collected ? '#22c55e' : 'var(--ink-faint)', whiteSpace: 'nowrap' }}>
-                              {s.cash_collected ? fmtCurrency(s.cash_collected) : '—'}
-                            </td>
-                            <td style={{ padding: '6px 12px', textAlign: 'right' }}>
-                              <DeleteBtn id={s.id} onConfirm={() => deleteSale(s.id)} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+            {/* Sales calls */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <span className="section-title" style={{ fontSize: '0.9375rem' }}>Booked Calls</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--ink-faint)' }}>{sales.length} attributed via GHL UTM</span>
               </div>
-            </>
-          )}
+              {sales.length === 0 ? (
+                <div className="glass-card" style={{ padding: 20, textAlign: 'center', fontSize: '0.8rem', color: 'var(--ink-faint)' }}>
+                  No calls found for this ad in the selected period
+                </div>
+              ) : (
+                <div className="glass-card" style={{ overflow: 'auto' }}>
+                  <table className="table-glass">
+                    <thead>
+                      <tr>
+                        <th>Name</th><th>Company</th><th>Booked</th><th>Show</th><th>Quality</th><th>Outcome</th><th>Cash</th><th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sales.map(s => (
+                        <tr key={s.id}>
+                          <td style={{ fontWeight: 500 }}>{s.lead_name || '—'}</td>
+                          <td style={{ color: 'var(--ink-muted)' }}>{s.company_name || '—'}</td>
+                          <td style={{ color: 'var(--ink-faint)' }}>{fmtDateShort(s.date_booked)}</td>
+                          <td>{s.show_status ? <Pill label={s.show_status} color={SHOW_COLORS[s.show_status] ?? 'var(--ink-muted)'} /> : <span style={{ color: 'var(--ink-faint)' }}>—</span>}</td>
+                          <td style={{ color: s.lead_quality_score != null ? '#fbbf24' : 'var(--ink-faint)' }}>
+                            {s.lead_quality_score != null ? `★ ${s.lead_quality_score}` : '—'}
+                          </td>
+                          <td>{s.call_outcome ? <Pill label={s.call_outcome} color={OUTCOME_COLORS[s.call_outcome] ?? 'var(--ink-muted)'} /> : <span style={{ color: 'var(--ink-faint)' }}>—</span>}</td>
+                          <td style={{ color: s.cash_collected ? 'var(--positive)' : 'var(--ink-faint)' }}>
+                            {s.cash_collected ? fmtCurrency(s.cash_collected) : '—'}
+                          </td>
+                          <td style={{ textAlign: 'right' }}><DeleteBtn id={s.id} onConfirm={() => deleteSale(s.id)} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </ModalBody>
     </Modal>
   )
 }
 
-// ── Flat sortable table ──────────────────────────────────────────────────────
+// ── Sortable table ───────────────────────────────────────────────────────────
 
-type ViewBy = 'ad' | 'adset' | 'campaign'
-type SortDir = 'asc' | 'desc'
-
-interface FlatRow extends AdMetrics {
-  // discriminated by `viewBy` of the parent table
-  primaryName: string
-  campaignName: string
-  adsetName: string | null      // null when viewBy === 'campaign'
-  // ad-specific (only when viewBy === 'ad')
-  adId?: string | null
-  status?: string | null
-  effectiveStatus?: string | null
-  isActive: boolean
-  // for click-through
-  adRef?: AdRow
-  // for stable key
-  key: string
-}
-
-interface FlatTableProps {
+interface AdsTableProps {
   rows: FlatRow[]
   viewBy: ViewBy
   sortKey: keyof AdMetrics
   sortDir: SortDir
   onSort: (key: keyof AdMetrics) => void
-  onAdClick: (ad: SelectedAd) => void
+  onRowClick: (ad: SelectedAd) => void
   dim?: boolean
-  visibleCols: ColDef[]
-  hideDeliveryDetail: boolean
-  onToggleDelivery: () => void
 }
 
-const NAME_WIDTH = 320
-
-function FlatTable({ rows, viewBy, sortKey, sortDir, onSort, onAdClick, dim = false, visibleCols, hideDeliveryDetail, onToggleDelivery }: FlatTableProps) {
+function AdsTable({ rows, viewBy, sortKey, sortDir, onSort, onRowClick, dim = false }: AdsTableProps) {
   if (rows.length === 0) {
     return (
-      <div style={{ padding: '28px 20px', textAlign: 'center', fontSize: '0.8125rem', color: 'var(--ink-faint)', background: 'var(--surface-1)', border: '1px solid var(--line)', borderRadius: 12 }}>
-        No data for this period
+      <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--ink-faint)', fontSize: '0.875rem' }}>
+        No data in this range.
       </div>
     )
   }
 
   const primaryLabel = viewBy === 'ad' ? 'Ad' : viewBy === 'adset' ? 'Ad Set' : 'Campaign'
 
-  const totalMetricWidth = visibleCols.reduce((s, c) => s + c.width, 0)
-  const tableWidth = NAME_WIDTH + totalMetricWidth
-
   return (
-    <div style={{ overflowX: 'auto', borderRadius: 12, border: '1px solid var(--line)', background: 'var(--surface-1)' }}>
-      <table style={{ width: tableWidth, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
-        <colgroup>
-          <col style={{ width: NAME_WIDTH }} />
-          {visibleCols.map(c => <col key={c.key} style={{ width: c.width }} />)}
-        </colgroup>
-
-        {/* Header */}
+    <div style={{ overflowX: 'auto' }}>
+      <table className="table-glass">
         <thead>
-          {/* Group row */}
-          <tr style={{ background: 'var(--surface-2)' }}>
-            <th style={{
-              position: 'sticky', left: 0, zIndex: 3, background: 'var(--surface-2)',
-              padding: '6px 14px', textAlign: 'left', borderBottom: '1px solid rgba(255,255,255,0.04)',
-            }} />
-            {(['delivery', 'leads', 'booking', 'show', 'qualify', 'revenue'] as const).map(grp => {
-              const count = visibleCols.filter(c => c.group === grp).length
-              if (count === 0) return null
-              const g = GROUP_STYLES[grp]
-              const label = { delivery: 'Delivery', leads: 'Lead Gen', booking: 'Booking', show: 'Show', qualify: 'Qualify', revenue: 'Revenue' }[grp]
-              return (
-                <th key={grp} colSpan={count} style={{
-                  padding: '5px 10px', textAlign: 'center', fontSize: '0.54rem', fontWeight: 700,
-                  textTransform: 'uppercase', letterSpacing: '0.14em',
-                  color: g.color, background: g.bg, borderBottom: '1px solid rgba(255,255,255,0.04)',
-                  borderLeft: '1px solid rgba(255,255,255,0.05)',
-                }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    {label}
-                    {grp === 'delivery' && (
-                      <button
-                        onClick={e => { e.stopPropagation(); onToggleDelivery() }}
-                        style={{
-                          fontSize: '0.5rem', fontWeight: 700, padding: '1px 5px', borderRadius: 3,
-                          cursor: 'pointer', border: '1px solid currentColor', background: 'transparent',
-                          color: hideDeliveryDetail ? g.color : 'rgba(255,255,255,0.3)',
-                          letterSpacing: '0.08em', textTransform: 'uppercase',
-                          opacity: hideDeliveryDetail ? 1 : 0.6,
-                          transition: 'opacity 150ms, color 150ms',
-                        }}
-                      >
-                        {hideDeliveryDetail ? 'show detail' : 'hide detail'}
-                      </button>
-                    )}
-                  </span>
-                </th>
-              )
-            })}
-          </tr>
-          {/* Column row */}
-          <tr style={{ background: 'var(--surface-2)' }}>
-            <th style={{
-              position: 'sticky', left: 0, zIndex: 3, background: 'var(--surface-2)',
-              padding: '7px 14px', textAlign: 'left', fontSize: '0.575rem', fontWeight: 700,
-              textTransform: 'uppercase', letterSpacing: '0.13em', color: 'var(--ink-faint)',
-              borderBottom: '1px solid var(--line)',
-            }}>{primaryLabel}</th>
-            {visibleCols.map(c => {
-              const g = GROUP_STYLES[c.group]
+          <tr>
+            <th>{primaryLabel}</th>
+            {viewBy === 'ad' && <th>Status</th>}
+            {COLS.map(c => {
               const isActive = c.key === sortKey
-              const arrow = isActive ? (sortDir === 'desc' ? '↓' : '↑') : ''
+              const arrow = isActive ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''
               return (
-                <th key={c.key} title={c.hint + ' — click to sort'}
+                <th
+                  key={c.key}
                   onClick={() => onSort(c.key)}
                   style={{
-                  padding: '7px 10px', textAlign: 'right', fontSize: '0.575rem', fontWeight: 700,
-                  textTransform: 'uppercase', letterSpacing: '0.13em',
-                  color: isActive ? (g.color !== 'var(--ink-faint)' ? g.color : 'var(--ink)') : 'var(--ink-faint)',
-                  background: g.bg, borderBottom: '1px solid var(--line)', whiteSpace: 'nowrap',
-                  cursor: 'pointer', userSelect: 'none',
-                  borderLeft: c.key === 'leads' || c.key === 'booked' || c.key === 'shows' || c.key === 'qualified' || c.key === 'closed'
-                    ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                }}>
-                  {c.label}{arrow && <span style={{ marginLeft: 4 }}>{arrow}</span>}
+                    textAlign: 'right', cursor: 'pointer', userSelect: 'none',
+                    color: isActive ? 'var(--ink)' : undefined,
+                  }}
+                >
+                  {c.label}{arrow}
                 </th>
               )
             })}
           </tr>
         </thead>
-
         <tbody>
           {rows.map(r => {
             const clickable = viewBy === 'ad' && r.adRef
-            const handleClick = clickable ? () => onAdClick({
+            const handleClick = clickable ? () => onRowClick({
               adName: r.adRef!.adName, adsetName: r.adRef!.adsetName, campaignName: r.adRef!.campaignName,
               adId: r.adRef!.adId, isActive: r.adRef!.isActive, status: r.adRef!.status,
               metrics: {
@@ -592,43 +456,40 @@ function FlatTable({ rows, viewBy, sortKey, sortDir, onSort, onAdClick, dim = fa
               },
             }) : undefined
 
-            // Sub-text below the primary name varies by viewBy
-            const subtext = viewBy === 'ad'
-              ? `${r.campaignName} · ${r.adsetName ?? ''}`
-              : viewBy === 'adset'
-              ? r.campaignName
-              : null
-
             return (
               <tr
                 key={r.key}
                 onClick={handleClick}
-                onMouseEnter={e => { if (clickable) { e.currentTarget.style.background = 'rgba(139,92,246,0.06)'; e.currentTarget.style.cursor = 'pointer' } else { e.currentTarget.style.background = 'rgba(255,255,255,0.02)' } }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                style={{ borderBottom: '1px solid rgba(255,255,255,0.035)' }}
+                style={{ cursor: clickable ? 'pointer' : 'default', opacity: dim ? 0.6 : 1 }}
               >
-                <td style={{
-                  position: 'sticky', left: 0, zIndex: 1, background: 'var(--surface-1)',
-                  padding: '8px 14px', borderBottom: '1px solid rgba(255,255,255,0.035)',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 0 }}>
-                    <div style={{ paddingTop: 3 }}><StatusDot isActive={r.isActive} status={r.status ?? null} /></div>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: '0.8125rem', fontWeight: viewBy === 'campaign' ? 700 : 600, color: dim ? 'var(--ink-muted)' : 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: dim ? 0.7 : 1, flex: 1 }} title={r.primaryName}>
-                          {r.primaryName}
-                        </span>
-                        {clickable && <span style={{ fontSize: '0.6rem', color: 'var(--accent)', opacity: 0.5, flexShrink: 0 }}>↗</span>}
-                      </div>
-                      {subtext && (
-                        <div style={{ fontSize: '0.625rem', color: 'var(--ink-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={subtext}>
-                          {subtext}
-                        </div>
-                      )}
-                    </div>
+                <td>
+                  <div style={{ fontWeight: 500, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.primaryName}>
+                    {r.primaryName}
                   </div>
+                  {viewBy === 'ad' && (
+                    <div style={{ fontSize: '0.6875rem', color: 'var(--ink-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {r.campaignName} › {r.adsetName}
+                    </div>
+                  )}
                 </td>
-                {visibleCols.map(c => <MetricCell key={c.key} col={c} value={(r as any)[c.key]} dim={dim} />)}
+                {viewBy === 'ad' && (
+                  <td>
+                    <span className={r.isActive ? 'badge badge-success' : 'badge badge-neutral'}>
+                      {r.isActive ? 'Active' : (r.status ?? 'Paused')}
+                    </span>
+                  </td>
+                )}
+                {COLS.map(c => {
+                  const raw = (r as any)[c.key]
+                  const isZero = raw == null || raw === 0
+                  const color = isZero ? 'var(--ink-faint)' : metricColor(c, raw)
+                  const weight = c.emphasizeIfNonZero && raw > 0 ? 600 : undefined
+                  return (
+                    <td key={c.key} style={{ textAlign: 'right', color, fontWeight: weight }}>
+                      {c.fmt(raw)}
+                    </td>
+                  )
+                })}
               </tr>
             )
           })}
@@ -638,20 +499,7 @@ function FlatTable({ rows, viewBy, sortKey, sortDir, onSort, onAdClick, dim = fa
   )
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
-
-function datePresets() {
-  const today = new Date()
-  const iso   = (d: Date) => d.toISOString().split('T')[0]
-  const sub   = (days: number) => { const d = new Date(today); d.setDate(d.getDate() - days); return iso(d) }
-  return [
-    { label: '7d',    from: sub(6),     to: iso(today) },
-    { label: '14d',   from: sub(13),    to: iso(today) },
-    { label: '30d',   from: sub(29),    to: iso(today) },
-    { label: 'Mo',    from: iso(new Date(today.getFullYear(), today.getMonth(), 1)), to: iso(today) },
-    { label: 'All',   from: '2020-01-01', to: iso(today) },
-  ]
-}
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function B2BAdsPage() {
   const [dateFrom, setDateFrom] = useState(() => {
@@ -661,88 +509,58 @@ export default function B2BAdsPage() {
   const [data, setData]       = useState<BreakdownData | null>(null)
   const [loading, setLoading] = useState(true)
   const [pastOpen, setPastOpen]         = useState(false)
-  const [hideDeliveryDetail, setHideDeliveryDetail] = useState(false)
   const [selectedAd, setSelectedAd]     = useState<SelectedAd | null>(null)
   const [viewBy, setViewBy]   = useState<ViewBy>('ad')
   const [sortKey, setSortKey] = useState<keyof AdMetrics>('spend')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
-  const visibleCols = COLS.filter(c => !(hideDeliveryDetail && c.hideable))
-
-  const fetchData = () => {
+  const fetchData = useCallback(() => {
     setLoading(true)
     const params = new URLSearchParams({ from: dateFrom, to: dateTo })
     fetch(`/api/b2b-ads/breakdown?${params}`)
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false) })
       .catch(() => setLoading(false))
-  }
+  }, [dateFrom, dateTo])
 
-  useEffect(() => { fetchData() }, [dateFrom, dateTo])
+  useEffect(() => { fetchData() }, [fetchData])
 
   const handleSort = (key: keyof AdMetrics) => {
-    if (key === sortKey) {
-      setSortDir(d => d === 'desc' ? 'asc' : 'desc')
-    } else {
-      setSortKey(key)
-      setSortDir('desc')
-    }
+    if (key === sortKey) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    else { setSortKey(key); setSortDir('desc') }
   }
 
-  // Flatten campaigns → rows based on viewBy, then split active/past, then sort.
   const { active, past } = useMemo(() => {
     if (!data) return { active: [] as FlatRow[], past: [] as FlatRow[] }
-
     const all: FlatRow[] = []
     if (viewBy === 'ad') {
-      for (const c of data.campaigns) {
-        for (const a of c.adsets) {
-          for (const ad of a.ads) {
-            all.push({
-              ...ad,
-              primaryName: ad.adName,
-              campaignName: c.campaignName,
-              adsetName: a.adsetName,
-              adId: ad.adId, status: ad.status, effectiveStatus: ad.effectiveStatus,
-              isActive: ad.isActive,
-              adRef: ad,
-              key: `ad::${ad.adId ?? ad.adName}::${a.adsetName}::${c.campaignName}`,
-            })
-          }
-        }
+      for (const c of data.campaigns) for (const a of c.adsets) for (const ad of a.ads) {
+        all.push({
+          ...ad, primaryName: ad.adName, campaignName: c.campaignName, adsetName: a.adsetName,
+          adId: ad.adId, status: ad.status, effectiveStatus: ad.effectiveStatus,
+          isActive: ad.isActive, adRef: ad,
+          key: `ad::${ad.adId ?? ad.adName}::${a.adsetName}::${c.campaignName}`,
+        })
       }
     } else if (viewBy === 'adset') {
-      for (const c of data.campaigns) {
-        for (const a of c.adsets) {
-          all.push({
-            ...a,
-            primaryName: a.adsetName,
-            campaignName: c.campaignName,
-            adsetName: a.adsetName,
-            isActive: a.isActive,
-            key: `aset::${c.campaignName}::${a.adsetName}`,
-          } as FlatRow)
-        }
+      for (const c of data.campaigns) for (const a of c.adsets) {
+        all.push({
+          ...a, primaryName: a.adsetName, campaignName: c.campaignName, adsetName: a.adsetName,
+          isActive: a.isActive, key: `aset::${c.campaignName}::${a.adsetName}`,
+        } as FlatRow)
       }
     } else {
       for (const c of data.campaigns) {
         all.push({
-          ...c,
-          primaryName: c.campaignName,
-          campaignName: c.campaignName,
-          adsetName: null,
-          isActive: c.isActive,
-          key: `camp::${c.campaignName}`,
+          ...c, primaryName: c.campaignName, campaignName: c.campaignName, adsetName: null,
+          isActive: c.isActive, key: `camp::${c.campaignName}`,
         } as FlatRow)
       }
     }
-
     const cmp = (a: FlatRow, b: FlatRow) => {
       const av = (a as any)[sortKey]
       const bv = (b as any)[sortKey]
-      // Nulls go to the bottom regardless of direction
-      const aNull = av == null
-      const bNull = bv == null
+      const aNull = av == null, bNull = bv == null
       if (aNull && bNull) return 0
       if (aNull) return 1
       if (bNull) return -1
@@ -750,11 +568,7 @@ export default function B2BAdsPage() {
       const r = av < bv ? -1 : 1
       return sortDir === 'desc' ? -r : r
     }
-
-    return {
-      active: all.filter(r => r.isActive).sort(cmp),
-      past:   all.filter(r => !r.isActive).sort(cmp),
-    }
+    return { active: all.filter(r => r.isActive).sort(cmp), past: all.filter(r => !r.isActive).sort(cmp) }
   }, [data, viewBy, sortKey, sortDir])
 
   const syncedLabel = data?.lastSynced ? fmtSynced(data.lastSynced) : 'Never synced'
@@ -763,68 +577,52 @@ export default function B2BAdsPage() {
     <>
       <div style={{ padding: '2rem', maxWidth: '1600px', margin: '0 auto' }}>
 
-        {/* Page title */}
+        {/* Title */}
         <div className="animate-in" style={{ marginBottom: '1.5rem' }}>
-          <h1 style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: '1.5rem',
-            fontWeight: 700,
-            letterSpacing: '-0.02em',
-            color: 'var(--ink)',
-          }}>B2B Ads Tracker</h1>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--ink)' }}>
+            B2B Ads Tracker
+          </h1>
           <p style={{ fontSize: '0.8125rem', color: 'var(--ink-muted)', marginTop: '0.25rem' }}>
             UTM-tracked, per-ad: attribution from Meta ad → GHL contact → sales tracker outcome
           </p>
         </div>
 
         {/* Filter row */}
-        <div className="animate-in delay-1" style={{
-          display: 'flex', gap: '1rem', alignItems: 'flex-end',
-          marginBottom: '1.5rem', flexWrap: 'wrap',
-        }}>
+        <div className="animate-in delay-1" style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
           <DateRangePicker from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
 
-          {/* Date presets */}
           <div>
             <label className="label-dark">Range</label>
             <div style={{ display: 'flex', border: '1px solid var(--line-strong)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
               {datePresets().map(p => {
-                const active = p.from === dateFrom && p.to === dateTo
+                const on = p.from === dateFrom && p.to === dateTo
                 return (
-                  <button
-                    key={p.label}
-                    onClick={() => { setDateFrom(p.from); setDateTo(p.to) }}
+                  <button key={p.label} onClick={() => { setDateFrom(p.from); setDateTo(p.to) }}
                     style={{
                       padding: '0.5rem 0.75rem', fontSize: '0.75rem', border: 'none', cursor: 'pointer',
-                      background: active ? 'var(--accent-soft)' : 'transparent',
-                      color: active ? 'var(--accent)' : 'var(--ink-muted)',
-                      fontWeight: active ? 600 : 400,
-                      letterSpacing: '0.04em', textTransform: 'uppercase',
-                    }}
-                  >{p.label}</button>
+                      background: on ? 'var(--accent-soft)' : 'transparent',
+                      color: on ? 'var(--accent)' : 'var(--ink-muted)',
+                      fontWeight: on ? 600 : 400, letterSpacing: '0.04em', textTransform: 'uppercase',
+                    }}>{p.label}</button>
                 )
               })}
             </div>
           </div>
 
-          {/* Level (Campaign / Ad Set / Ad) */}
           <div>
             <label className="label-dark">Level</label>
             <div style={{ display: 'flex', border: '1px solid var(--line-strong)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
               {(['campaign', 'adset', 'ad'] as const).map(v => {
-                const isOn = v === viewBy
+                const on = v === viewBy
                 const label = v === 'ad' ? 'Ads' : v === 'adset' ? 'Ad Sets' : 'Campaigns'
                 return (
-                  <button
-                    key={v}
-                    onClick={() => setViewBy(v)}
+                  <button key={v} onClick={() => setViewBy(v)}
                     style={{
                       padding: '0.5rem 0.875rem', fontSize: '0.8125rem', border: 'none', cursor: 'pointer',
-                      background: isOn ? 'var(--accent-soft)' : 'transparent',
-                      color: isOn ? 'var(--accent)' : 'var(--ink-muted)',
-                      fontWeight: isOn ? 600 : 400,
-                    }}
-                  >{label}</button>
+                      background: on ? 'var(--accent-soft)' : 'transparent',
+                      color: on ? 'var(--accent)' : 'var(--ink-muted)',
+                      fontWeight: on ? 600 : 400,
+                    }}>{label}</button>
                 )
               })}
             </div>
@@ -846,7 +644,7 @@ export default function B2BAdsPage() {
               <KpiGrid t={data.totals} />
             </div>
 
-            {/* Active ads — wrapped in glass card */}
+            {/* Active */}
             <div className="animate-in delay-3 glass-card" style={{ marginBottom: '1.5rem', padding: 0, overflow: 'hidden' }}>
               <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -854,18 +652,18 @@ export default function B2BAdsPage() {
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--positive)' }} />
-                  <span className="section-title" style={{ fontSize: '0.9375rem' }}>Active {viewBy === 'ad' ? 'Ads' : viewBy === 'adset' ? 'Ad Sets' : 'Campaigns'}</span>
+                  <span className="section-title" style={{ fontSize: '0.9375rem' }}>
+                    Active {viewBy === 'ad' ? 'Ads' : viewBy === 'adset' ? 'Ad Sets' : 'Campaigns'}
+                  </span>
                 </div>
                 <span style={{ fontSize: '0.75rem', color: 'var(--ink-faint)' }}>
                   {active.length} row{active.length !== 1 ? 's' : ''}
                 </span>
               </div>
-              <div style={{ overflowX: 'auto' }}>
-                <FlatTable rows={active} viewBy={viewBy} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} onAdClick={setSelectedAd} visibleCols={visibleCols} hideDeliveryDetail={hideDeliveryDetail} onToggleDelivery={() => setHideDeliveryDetail(v => !v)} />
-              </div>
+              <AdsTable rows={active} viewBy={viewBy} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} onRowClick={setSelectedAd} />
             </div>
 
-            {/* Past / off ads */}
+            {/* Past / off */}
             {past.length > 0 && (
               <div className="animate-in delay-4 glass-card" style={{ padding: 0, overflow: 'hidden' }}>
                 <div
@@ -879,7 +677,9 @@ export default function B2BAdsPage() {
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'rgba(255,255,255,0.2)' }} />
-                    <span className="section-title" style={{ fontSize: '0.9375rem', color: 'var(--ink-muted)' }}>Past / Off {viewBy === 'ad' ? 'Ads' : viewBy === 'adset' ? 'Ad Sets' : 'Campaigns'}</span>
+                    <span className="section-title" style={{ fontSize: '0.9375rem', color: 'var(--ink-muted)' }}>
+                      Past / Off {viewBy === 'ad' ? 'Ads' : viewBy === 'adset' ? 'Ad Sets' : 'Campaigns'}
+                    </span>
                     <span style={{ fontSize: '0.7rem', color: 'var(--accent)', transition: 'transform 150ms', display: 'inline-block', transform: pastOpen ? 'rotate(90deg)' : 'none' }}>▶</span>
                   </div>
                   <span style={{ fontSize: '0.75rem', color: 'var(--ink-faint)' }}>
@@ -887,9 +687,7 @@ export default function B2BAdsPage() {
                   </span>
                 </div>
                 {pastOpen && (
-                  <div style={{ overflowX: 'auto' }}>
-                    <FlatTable rows={past} viewBy={viewBy} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} onAdClick={setSelectedAd} dim visibleCols={visibleCols} hideDeliveryDetail={hideDeliveryDetail} onToggleDelivery={() => setHideDeliveryDetail(v => !v)} />
-                  </div>
+                  <AdsTable rows={past} viewBy={viewBy} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} onRowClick={setSelectedAd} dim />
                 )}
               </div>
             )}
