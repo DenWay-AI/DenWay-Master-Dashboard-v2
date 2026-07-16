@@ -26,8 +26,8 @@ export default function KPICard({
   valueColor,
 }: KPICardProps) {
   const delayClass = delay != null ? ` delay-${delay}` : ''
-  const valueSize =
-    size === 'sm' ? 'text-xl' : size === 'lg' ? 'text-3xl' : 'text-2xl'
+  const valueFontSize =
+    size === 'sm' ? '1.25rem' : size === 'lg' ? '2rem' : '1.75rem'
 
   const good = delta != null && (lowerIsBetter ? delta < 0 : delta > 0)
   const bad  = delta != null && (lowerIsBetter ? delta > 0 : delta < 0)
@@ -35,26 +35,38 @@ export default function KPICard({
 
   return (
     <div
-      className={`animate-fade-up${delayClass} rounded-card bg-surface-1 shadow-panel px-5 py-4 ${
-        emphasis ? 'border border-accent/40' : 'border border-line'
-      }`}
+      className={`glass-card animate-fade-up${delayClass}`}
+      style={{
+        padding: '18px 20px',
+        borderColor: emphasis ? 'var(--card-border-hi)' : undefined,
+      }}
     >
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-ink-muted">{label}</span>
-        {icon && <span className="text-ink-faint">{icon}</span>}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span className="kpi-label">{label}</span>
+        {icon && <span style={{ color: 'var(--ink-faint)' }}>{icon}</span>}
       </div>
-      <div className="mt-2 flex items-baseline gap-2">
-        <span className={`tnum ${valueSize} font-semibold tracking-tight`} style={{ color: valueColor ?? 'var(--ink)' }}>
+      <div style={{ marginTop: 10, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span
+          className="tnum"
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: valueFontSize,
+            fontWeight: 600,
+            letterSpacing: '-0.02em',
+            lineHeight: 1.05,
+            color: valueColor ?? 'var(--ink)',
+          }}
+        >
           {String(value)}
         </span>
-        {sub && <span className="text-xs text-ink-faint">{sub}</span>}
+        {sub && <span style={{ fontSize: '0.75rem', color: 'var(--ink-faint)' }}>{sub}</span>}
       </div>
       {delta != null && (
-        <div className="mt-1.5 flex items-center gap-1.5">
-          <span className="tnum text-xs font-medium" style={{ color: deltaColor }}>
+        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="tnum" style={{ fontSize: '0.75rem', fontWeight: 500, color: deltaColor }}>
             {delta > 0 ? '↑' : delta < 0 ? '↓' : '·'} {Math.abs(delta).toFixed(1)}%
           </span>
-          <span className="text-[11px] text-ink-faint">vs last period</span>
+          <span style={{ fontSize: '0.6875rem', color: 'var(--ink-faint)' }}>vs last period</span>
         </div>
       )}
     </div>
