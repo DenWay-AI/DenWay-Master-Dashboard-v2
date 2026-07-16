@@ -3,8 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Star, Video, ExternalLink, RefreshCw } from 'lucide-react'
 import { Modal, ModalHeader, ModalBody, ModalCloseButton } from '@/components/ui/Modal'
-import { PageHeader, PageBody } from '@/components/ui/PageHeader'
-import KPICard from '@/components/ui/KPICard'
 import InlinePicker from '@/components/ui/InlinePicker'
 import { fmtCurrency } from '@/lib/formatters'
 
@@ -87,34 +85,41 @@ interface Appointment {
 
 const QUALIFIED_OPTIONS = [
   { value: null,        label: '—' },
-  { value: 'Yes',       label: 'Yes',      badgeClass: 'bg-emerald-50 text-emerald-700' },
-  { value: 'No',        label: 'No',       badgeClass: 'bg-red-50 text-red-600' },
-  { value: 'Pending',   label: 'Pending',  badgeClass: 'bg-amber-50 text-amber-700' },
+  { value: 'Yes',       label: 'Yes',      badgeClass: 'badge badge-success' },
+  { value: 'No',        label: 'No',       badgeClass: 'badge badge-danger' },
+  { value: 'Pending',   label: 'Pending',  badgeClass: 'badge badge-warning' },
 ]
 
 const OUTCOME_OPTIONS = [
   { value: null,          label: '—' },
-  { value: 'Closed',      label: 'Closed',      badgeClass: 'bg-emerald-50 text-emerald-700' },
-  { value: 'Follow-up',   label: 'Follow-up',   badgeClass: 'bg-blue-50 text-blue-700' },
-  { value: 'No Sale',     label: 'No Sale',     badgeClass: 'bg-zinc-100 text-zinc-600' },
-  { value: 'Unqualified', label: 'Unqualified', badgeClass: 'bg-zinc-100 text-zinc-500' },
+  { value: 'Closed',      label: 'Closed',      badgeClass: 'badge badge-success' },
+  { value: 'Follow-up',   label: 'Follow-up',   badgeClass: 'badge badge-info' },
+  { value: 'No Sale',     label: 'No Sale',     badgeClass: 'badge badge-neutral' },
+  { value: 'Unqualified', label: 'Unqualified', badgeClass: 'badge badge-neutral' },
 ]
 
 const SHOW_STATUS_OPTIONS = [
   { value: null,         label: '—' },
-  { value: 'Showed',     label: 'Showed',     badgeClass: 'bg-emerald-50 text-emerald-700' },
-  { value: 'No Show',    label: 'No Show',    badgeClass: 'bg-red-50 text-red-600' },
-  { value: 'Cancelled',  label: 'Cancelled',  badgeClass: 'bg-zinc-100 text-zinc-600' },
-  { value: 'Reschedule', label: 'Reschedule', badgeClass: 'bg-amber-50 text-amber-700' },
-  { value: 'Pending',    label: 'Pending',    badgeClass: 'bg-blue-50 text-blue-600' },
+  { value: 'Showed',     label: 'Showed',     badgeClass: 'badge badge-success' },
+  { value: 'No Show',    label: 'No Show',    badgeClass: 'badge badge-danger' },
+  { value: 'Cancelled',  label: 'Cancelled',  badgeClass: 'badge badge-neutral' },
+  { value: 'Reschedule', label: 'Reschedule', badgeClass: 'badge badge-warning' },
+  { value: 'Pending',    label: 'Pending',    badgeClass: 'badge badge-info' },
 ]
 
 const SHOW_STATUS_COLORS: Record<string, string> = {
-  Showed:     'bg-emerald-50 text-emerald-700',
-  'No Show':  'bg-red-50 text-red-600',
-  Cancelled:  'bg-zinc-100 text-zinc-600',
-  Reschedule: 'bg-amber-50 text-amber-700',
-  Pending:    'bg-blue-50 text-blue-600',
+  Showed:     'badge badge-success',
+  'No Show':  'badge badge-danger',
+  Cancelled:  'badge badge-neutral',
+  Reschedule: 'badge badge-warning',
+  Pending:    'badge badge-info',
+}
+
+// Source badge (derived from ad_name presence + utm_source-ish inference)
+function sourceOf(ad_name: string | null | undefined, meeting_count: number): { label: string; cls: string } {
+  if (ad_name) return { label: 'Meta Ad',      cls: 'badge badge-info' }
+  if (meeting_count > 0) return { label: 'Self-Booked', cls: 'badge badge-success' }
+  return { label: 'Organic', cls: 'badge badge-neutral' }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -132,11 +137,8 @@ function fmtDuration(secs: number | null) {
 }
 
 function Badge({ label, className }: { label: string; className: string }) {
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${className}`}>
-      {label}
-    </span>
-  )
+  // Regas .badge / .badge-success / .badge-danger / .badge-warning / .badge-neutral / .badge-info
+  return <span className={className}>{label}</span>
 }
 
 // ── Inline editing primitives ─────────────────────────────────────────────────
@@ -689,93 +691,96 @@ function LeadsTable({ leads, onUpdate }: { leads: Lead[]; onUpdate: (id: string,
 
   return (
     <>
-      <div className="rounded-card border border-line bg-surface-1 shadow-panel overflow-x-auto">
-        <table className="w-full min-w-[960px] text-left">
+      <div className="glass-card" style={{ overflow: 'auto', padding: 0 }}>
+        <table className="table-glass">
           <thead>
-            <tr className="border-b border-line">
-              <th className="py-3 px-4 text-xs font-medium text-ink-faint">Company / Contact</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Outcome</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Qualified</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint text-center">Appts</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Last call</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Quality</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint text-right">Contract</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint text-right">Cash</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Ad</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint text-center">Rec</th>
+            <tr>
+              <th>Lead</th>
+              <th>Source</th>
+              <th>Ad</th>
+              <th>Show</th>
+              <th>Qualified</th>
+              <th>Rating</th>
+              <th>Outcome</th>
+              <th style={{ textAlign: 'center' }}>Appts</th>
+              <th>Last call</th>
+              <th style={{ textAlign: 'right' }}>Contract</th>
+              <th style={{ textAlign: 'right' }}>Cash</th>
+              <th style={{ textAlign: 'center' }}>Rec</th>
             </tr>
           </thead>
           <tbody>
             {leads.length === 0 && (
-              <tr><td colSpan={10} className="py-12 text-center text-sm text-ink-faint">No leads found.</td></tr>
+              <tr><td colSpan={12} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--ink-faint)' }}>No leads found.</td></tr>
             )}
             {leads.map(lead => {
               const qualOpt   = QUALIFIED_OPTIONS.find(o => o.value === lead.qualified)
               const outOpt    = OUTCOME_OPTIONS.find(o => o.value === lead.call_outcome)
-              const showColor = lead.last_show_status ? SHOW_STATUS_COLORS[lead.last_show_status] : null
+              const showBadgeCls = lead.last_show_status ? SHOW_STATUS_COLORS[lead.last_show_status] : null
+              const src = sourceOf(lead.ad_name, lead.meeting_count)
+              const hasCash = (lead.cash_collected ?? 0) > 0
               return (
-                <tr key={lead.id}
-                  className="border-b border-line hover:bg-surface-2/60 cursor-pointer transition-colors"
-                  onClick={() => setModalLead(lead)}>
-                  <td className="py-3 px-4">
-                    <p className="text-sm font-medium text-ink leading-tight">{lead.company_name || lead.lead_name || '—'}</p>
+                <tr key={lead.id} onClick={() => setModalLead(lead)} style={{ cursor: 'pointer' }}>
+                  <td>
+                    <div style={{ fontWeight: 500 }}>{lead.company_name || lead.lead_name || '—'}</div>
                     {lead.company_name && lead.lead_name && (
-                      <p className="text-xs text-ink-muted mt-0.5">{lead.lead_name}</p>
+                      <div style={{ fontSize: '0.6875rem', color: 'var(--ink-muted)', marginTop: 2 }}>{lead.lead_name}</div>
                     )}
                   </td>
-                  <td className="py-3 pr-4" onClick={e => e.stopPropagation()}>
-                    <InlinePicker options={OUTCOME_OPTIONS} value={lead.call_outcome}
-                      onSelect={v => patchLead(lead.id, { call_outcome: v })}
-                      trigger={() => outOpt?.badgeClass
-                        ? <Badge label={outOpt.label} className={outOpt.badgeClass} />
-                        : <span className="text-xs text-ink-faint">—</span>} />
+                  <td>
+                    <Badge label={src.label} className={src.cls} />
                   </td>
-                  <td className="py-3 pr-4" onClick={e => e.stopPropagation()}>
+                  <td>
+                    <span style={{ color: 'var(--ink-muted)', display: 'inline-block', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }} title={lead.ad_name ?? undefined}>
+                      {lead.ad_name ?? '—'}
+                    </span>
+                  </td>
+                  <td>
+                    {lead.last_show_status && showBadgeCls
+                      ? <Badge label={lead.last_show_status} className={showBadgeCls} />
+                      : <span style={{ color: 'var(--ink-faint)' }}>—</span>}
+                  </td>
+                  <td onClick={e => e.stopPropagation()}>
                     <InlinePicker options={QUALIFIED_OPTIONS} value={lead.qualified}
                       onSelect={v => patchLead(lead.id, { qualified: v })}
                       trigger={() => qualOpt?.badgeClass
                         ? <Badge label={qualOpt.label} className={qualOpt.badgeClass} />
-                        : <span className="text-xs text-ink-faint">—</span>} />
+                        : <span style={{ color: 'var(--ink-faint)' }}>—</span>} />
                   </td>
-                  <td className="py-3 pr-4 text-center">
-                    <span className={`text-xs font-medium ${lead.meeting_count > 0 ? 'text-ink' : 'text-ink-faint'}`}>
-                      {lead.meeting_count > 0 ? lead.meeting_count : '—'}
-                    </span>
-                  </td>
-                  <td className="py-3 pr-4">
-                    <p className="text-xs text-ink-muted">{fmtDate(lead.last_meeting_at)}</p>
-                    {showColor && lead.last_show_status && (
-                      <Badge label={lead.last_show_status} className={`mt-0.5 ${showColor}`} />
-                    )}
-                  </td>
-                  <td className="py-3 pr-4">
-                    <div className="flex items-center gap-0.5">
+                  <td>
+                    <div style={{ display: 'inline-flex', gap: 1 }}>
                       {[1,2,3,4,5].map(i => (
-                        <Star key={i} size={11}
+                        <Star key={i} size={12}
                           className={i <= (lead.lead_quality_score ?? 0) ? 'text-amber-400 fill-amber-400' : 'text-line fill-transparent'} />
                       ))}
                     </div>
                   </td>
-                  <td className="py-3 pr-4 text-right">
-                    <span className="tnum text-sm text-ink">{lead.contract_value ? fmtCurrency(lead.contract_value) : '—'}</span>
+                  <td onClick={e => e.stopPropagation()}>
+                    <InlinePicker options={OUTCOME_OPTIONS} value={lead.call_outcome}
+                      onSelect={v => patchLead(lead.id, { call_outcome: v })}
+                      trigger={() => outOpt?.badgeClass
+                        ? <Badge label={outOpt.label} className={outOpt.badgeClass} />
+                        : <span style={{ color: 'var(--ink-faint)' }}>—</span>} />
                   </td>
-                  <td className="py-3 pr-4 text-right">
-                    <span className="tnum text-sm text-ink">{lead.cash_collected ? fmtCurrency(lead.cash_collected) : '—'}</span>
+                  <td style={{ textAlign: 'center', color: lead.meeting_count > 0 ? 'var(--ink)' : 'var(--ink-faint)' }}>
+                    {lead.meeting_count > 0 ? lead.meeting_count : '—'}
                   </td>
-                  <td className="py-3 pr-4">
-                    <span className="text-xs text-ink-muted truncate max-w-[120px] block" title={lead.ad_name ?? undefined}>
-                      {lead.ad_name ?? '—'}
-                    </span>
+                  <td style={{ color: 'var(--ink-muted)' }}>{fmtDate(lead.last_meeting_at)}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    {lead.contract_value ? fmtCurrency(lead.contract_value) : <span style={{ color: 'var(--ink-faint)' }}>—</span>}
                   </td>
-                  <td className="py-3 pr-4 text-center">
+                  <td style={{ textAlign: 'right', color: hasCash ? 'var(--positive)' : 'var(--ink-faint)', fontWeight: hasCash ? 600 : 400 }}>
+                    {hasCash ? fmtCurrency(lead.cash_collected!) : '—'}
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
                     {lead.last_fathom_url ? (
                       <a href={lead.last_fathom_url} target="_blank" rel="noreferrer"
                         onClick={e => e.stopPropagation()}
-                        className="inline-flex items-center justify-center rounded-md p-1 text-ink-faint hover:text-accent hover:bg-accent-soft transition-colors">
+                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 4, borderRadius: 6, color: 'var(--accent)' }}>
                         <Video size={14} />
                       </a>
                     ) : (
-                      <span className="text-ink-faint opacity-30"><Video size={14} /></span>
+                      <span style={{ color: 'var(--ink-faint)', opacity: 0.3 }}><Video size={14} /></span>
                     )}
                   </td>
                 </tr>
@@ -812,67 +817,84 @@ function AppointmentsTable({
 
   return (
     <>
-      <div className="rounded-card border border-line bg-surface-1 shadow-panel overflow-x-auto">
-        <table className="w-full min-w-[700px] text-left">
+      <div className="glass-card" style={{ overflow: 'auto', padding: 0 }}>
+        <table className="table-glass">
           <thead>
-            <tr className="border-b border-line">
-              <th className="px-4 py-3 text-xs font-medium text-ink-faint">Date</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Lead / Company</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Show</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Outcome</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Closer</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Duration</th>
-              <th className="py-3 pr-4 text-xs font-medium text-ink-faint">Recording</th>
+            <tr>
+              <th>Date</th>
+              <th>Lead</th>
+              <th>Source</th>
+              <th>Ad</th>
+              <th>Show</th>
+              <th>Rating</th>
+              <th>Outcome</th>
+              <th>Closer</th>
+              <th style={{ textAlign: 'right' }}>Cash</th>
+              <th style={{ textAlign: 'center' }}>Rec</th>
             </tr>
           </thead>
           <tbody>
             {appointments.length === 0 && (
-              <tr><td colSpan={7} className="py-12 text-center text-sm text-ink-faint">No appointments yet.</td></tr>
+              <tr><td colSpan={10} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--ink-faint)' }}>No appointments yet.</td></tr>
             )}
             {appointments.map(appt => {
-              const lead     = appt.b2b_leads
-              const showColor = appt.show_status ? SHOW_STATUS_COLORS[appt.show_status] : null
-              const outOpt   = OUTCOME_OPTIONS.find(o => o.value === lead?.call_outcome)
+              const lead      = appt.b2b_leads
+              const showCls   = appt.show_status ? SHOW_STATUS_COLORS[appt.show_status] : null
+              const outOpt    = OUTCOME_OPTIONS.find(o => o.value === lead?.call_outcome)
+              const src       = sourceOf(lead?.ad_name, 1)
+              const hasCash   = (lead?.cash_collected ?? 0) > 0
               return (
-                <tr key={appt.id}
-                  className="border-b border-line hover:bg-surface-2/60 cursor-pointer transition-colors"
-                  onClick={() => setModalAppt(appt)}>
-                  <td className="px-4 py-3 text-sm text-ink">{fmtDate(appt.scheduled_at)}</td>
-                  <td className="py-3 pr-4">
+                <tr key={appt.id} onClick={() => setModalAppt(appt)} style={{ cursor: 'pointer' }}>
+                  <td style={{ color: 'var(--ink-muted)' }}>{fmtDate(appt.scheduled_at)}</td>
+                  <td>
                     {!appt.lead_id ? (
-                      <Badge label="Unmatched" className="bg-amber-50 text-amber-700" />
+                      <Badge label="Unmatched" className="badge badge-warning" />
                     ) : (
                       <div>
-                        <p className="text-sm font-medium text-ink leading-tight">
-                          {lead?.company_name || lead?.lead_name || '—'}
-                        </p>
+                        <div style={{ fontWeight: 500 }}>{lead?.company_name || lead?.lead_name || '—'}</div>
                         {lead?.company_name && lead?.lead_name && (
-                          <p className="text-xs text-ink-muted mt-0.5">{lead.lead_name}</p>
+                          <div style={{ fontSize: '0.6875rem', color: 'var(--ink-muted)', marginTop: 2 }}>{lead.lead_name}</div>
                         )}
                       </div>
                     )}
                   </td>
-                  <td className="py-3 pr-4">
-                    {showColor && appt.show_status
-                      ? <Badge label={appt.show_status} className={showColor} />
-                      : <span className="text-xs text-ink-faint">—</span>}
+                  <td>{lead ? <Badge label={src.label} className={src.cls} /> : <span style={{ color: 'var(--ink-faint)' }}>—</span>}</td>
+                  <td>
+                    <span style={{ color: 'var(--ink-muted)', display: 'inline-block', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }} title={lead?.ad_name ?? undefined}>
+                      {lead?.ad_name ?? '—'}
+                    </span>
                   </td>
-                  <td className="py-3 pr-4">
+                  <td>
+                    {showCls && appt.show_status
+                      ? <Badge label={appt.show_status} className={showCls} />
+                      : <span style={{ color: 'var(--ink-faint)' }}>—</span>}
+                  </td>
+                  <td>
+                    <div style={{ display: 'inline-flex', gap: 1 }}>
+                      {[1,2,3,4,5].map(i => (
+                        <Star key={i} size={12}
+                          className={i <= (lead?.lead_quality_score ?? 0) ? 'text-amber-400 fill-amber-400' : 'text-line fill-transparent'} />
+                      ))}
+                    </div>
+                  </td>
+                  <td>
                     {outOpt?.badgeClass
                       ? <Badge label={outOpt.label} className={outOpt.badgeClass} />
-                      : <span className="text-xs text-ink-faint">—</span>}
+                      : <span style={{ color: 'var(--ink-faint)' }}>—</span>}
                   </td>
-                  <td className="py-3 pr-4 text-sm text-ink-muted">{appt.closer ?? '—'}</td>
-                  <td className="py-3 pr-4 text-sm text-ink-muted tnum">{fmtDuration(appt.duration_seconds) ?? '—'}</td>
-                  <td className="py-3 pr-4">
+                  <td style={{ color: 'var(--ink-muted)' }}>{appt.closer ?? '—'}</td>
+                  <td style={{ textAlign: 'right', color: hasCash ? 'var(--positive)' : 'var(--ink-faint)', fontWeight: hasCash ? 600 : 400 }}>
+                    {hasCash ? fmtCurrency(lead!.cash_collected!) : '—'}
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
                     {appt.fathom_url ? (
                       <a href={appt.fathom_url} target="_blank" rel="noreferrer"
                         onClick={e => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 text-xs text-accent hover:underline">
-                        <Video size={13} /> Watch
+                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 4, borderRadius: 6, color: 'var(--accent)' }}>
+                        <Video size={14} />
                       </a>
                     ) : (
-                      <span className="text-xs text-ink-faint">—</span>
+                      <span style={{ color: 'var(--ink-faint)', opacity: 0.3 }}><Video size={14} /></span>
                     )}
                   </td>
                 </tr>
@@ -990,86 +1012,116 @@ export default function SalesTrackerPage() {
   const showed   = appointments.filter(a => a.show_status === 'Showed').length
 
   return (
-    <>
-      <PageHeader
-        title="Sales Tracker"
-        subtitle="Leads are deals — one per practice, multiple appointments"
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleSync}
-              disabled={syncState === 'running'}
-              className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border text-xs font-medium transition-colors ${
-                syncState === 'running'
-                  ? 'border-line text-ink-faint bg-surface-2 cursor-not-allowed'
-                  : syncState === 'error'
-                  ? 'border-red-300 text-red-600 bg-red-50 hover:bg-red-100'
-                  : syncState === 'done'
-                  ? 'border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
-                  : 'border-line text-ink-muted bg-surface-1 hover:bg-surface-2 hover:text-ink'
-              }`}
-              title={syncMsg || 'Pull all appointments from GHL (last 2 years)'}
-            >
-              <RefreshCw
-                size={12}
-                className={syncState === 'running' ? 'animate-spin' : ''}
-              />
-              {syncState === 'running' ? 'Syncing…' : syncState === 'done' ? 'Synced' : syncState === 'error' ? 'Sync failed' : 'Sync GHL'}
-            </button>
-            {syncMsg && (
-              <span className={`text-xs ${syncState === 'error' ? 'text-red-500' : 'text-ink-faint'}`}>
-                {syncMsg}
-              </span>
-            )}
-            <input
-              type="search"
-              placeholder={tab === 'leads' ? 'Search leads…' : 'Search appointments…'}
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="h-8 w-56 rounded-lg border border-line bg-surface-1 px-3 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-1 focus:ring-accent"
-            />
-          </div>
-        }
-      />
+    <div style={{ padding: '2rem', maxWidth: '1600px', margin: '0 auto' }}>
 
-      <PageBody>
-        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <KPICard label="Total leads"    value={total} />
-          <KPICard label="Closed"         value={closed} />
-          <KPICard label="Open pipeline"  value={fmtCurrency(pipeline)} />
-          <KPICard label="Cash collected" value={fmtCurrency(cashIn)} />
-          <KPICard label={`Appointments (${showed} showed)`} value={appointments.length} />
+      {/* Title */}
+      <div className="animate-in" style={{ marginBottom: '1.5rem' }}>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--ink)' }}>
+          Sales Tracker
+        </h1>
+        <p style={{ fontSize: '0.8125rem', color: 'var(--ink-muted)', marginTop: '0.25rem' }}>
+          Every strategy session — rated, tracked, tied to its recording and its payment
+        </p>
+      </div>
+
+      {/* Filter row */}
+      <div className="animate-in delay-1" style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+        <div>
+          <label className="label-dark">Search</label>
+          <input
+            type="search"
+            placeholder={tab === 'leads' ? 'Search leads…' : 'Search appointments…'}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="input-dark"
+            style={{ width: 240 }}
+          />
         </div>
+        <button
+          onClick={handleSync}
+          disabled={syncState === 'running'}
+          style={{
+            padding: '0.5rem 0.875rem', fontSize: '0.8125rem', cursor: 'pointer',
+            border: '1px solid var(--line-strong)', borderRadius: 'var(--radius)',
+            background: syncState === 'running' ? 'var(--surface-2)' : 'transparent',
+            color: syncState === 'error' ? 'var(--negative)' : syncState === 'done' ? 'var(--positive)' : 'var(--ink-muted)',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+          title={syncMsg || 'Pull all appointments from GHL (last 2 years)'}
+        >
+          <RefreshCw size={13} className={syncState === 'running' ? 'animate-spin' : ''} />
+          {syncState === 'running' ? 'Syncing…' : syncState === 'done' ? 'Synced' : syncState === 'error' ? 'Sync failed' : 'Sync GHL'}
+        </button>
+        {syncMsg && (
+          <span style={{ fontSize: '0.7rem', color: syncState === 'error' ? 'var(--negative)' : 'var(--ink-faint)', marginBottom: 8 }}>
+            {syncMsg}
+          </span>
+        )}
+      </div>
 
-        <div className="mb-4 flex gap-1 border-b border-line">
-          {(['leads', 'appointments'] as Tab[]).map(t => (
-            <button key={t} onClick={() => { setTab(t); setSearch('') }}
-              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                tab === t ? 'border-accent text-accent' : 'border-transparent text-ink-muted hover:text-ink'
-              }`}>
-              {t === 'leads' ? `Leads (${leads.length})` : `Appointments (${appointments.length})`}
-            </button>
+      {/* KPI grid */}
+      <div className="animate-in delay-2" style={{ marginBottom: '1.5rem' }}>
+        <div className="kpi-grid">
+          {[
+            { label: 'Total Leads',     value: String(total) },
+            { label: 'Closed',          value: String(closed) },
+            { label: 'Open Pipeline',   value: fmtCurrency(pipeline) },
+            { label: 'Cash Collected',  value: fmtCurrency(cashIn) },
+            { label: `Appointments`,    value: String(appointments.length), sub: `${showed} showed` },
+          ].map(it => (
+            <div key={it.label} className="glass-card glass-card-lift" style={{ padding: '20px 20px' }}>
+              <span className="kpi-label">{it.label}</span>
+              <div className="kpi-value" style={{ marginTop: 12 }}>{it.value}</div>
+              {(it as any).sub && (
+                <span style={{ display: 'block', marginTop: 6, fontSize: '0.6875rem', color: 'var(--ink-muted)', letterSpacing: '0.04em' }}>
+                  {(it as any).sub}
+                </span>
+              )}
+            </div>
           ))}
         </div>
+      </div>
 
-        {loading ? (
-          <p className="py-12 text-center text-sm text-ink-faint">Loading…</p>
-        ) : tab === 'leads' ? (
-          <>
-            <LeadsTable leads={filteredLeads} onUpdate={handleLeadUpdate} />
-            <p className="mt-3 text-xs text-ink-faint">
-              {filteredLeads.length} of {total} leads{search && ` matching "${search}"`}
-            </p>
-          </>
-        ) : (
-          <>
-            <AppointmentsTable appointments={filteredAppts} onUpdate={handleApptUpdate} />
-            <p className="mt-3 text-xs text-ink-faint">
-              {filteredAppts.length} of {appointments.length} appointments{search && ` matching "${search}"`}
-            </p>
-          </>
-        )}
-      </PageBody>
-    </>
+      {/* Tab bar */}
+      <div className="animate-in delay-3" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--line)', marginBottom: '1rem' }}>
+        {(['leads', 'appointments'] as Tab[]).map(t => {
+          const on = tab === t
+          return (
+            <button
+              key={t}
+              onClick={() => { setTab(t); setSearch('') }}
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                padding: '0.5rem 0.875rem', fontSize: '0.8125rem',
+                fontWeight: on ? 600 : 400,
+                color: on ? 'var(--accent)' : 'var(--ink-muted)',
+                borderBottom: on ? '2px solid var(--accent)' : '2px solid transparent',
+                marginBottom: -1,
+              }}
+            >
+              {t === 'leads' ? `Leads (${leads.length})` : `Appointments (${appointments.length})`}
+            </button>
+          )
+        })}
+      </div>
+
+      {loading ? (
+        <p style={{ padding: '3rem', textAlign: 'center', color: 'var(--ink-faint)', fontSize: '0.875rem' }}>Loading…</p>
+      ) : tab === 'leads' ? (
+        <div className="animate-in delay-4">
+          <LeadsTable leads={filteredLeads} onUpdate={handleLeadUpdate} />
+          <p style={{ marginTop: 12, fontSize: '0.6875rem', color: 'var(--ink-muted)' }}>
+            {filteredLeads.length} of {total} leads{search && ` matching "${search}"`}
+          </p>
+        </div>
+      ) : (
+        <div className="animate-in delay-4">
+          <AppointmentsTable appointments={filteredAppts} onUpdate={handleApptUpdate} />
+          <p style={{ marginTop: 12, fontSize: '0.6875rem', color: 'var(--ink-muted)' }}>
+            {filteredAppts.length} of {appointments.length} appointments{search && ` matching "${search}"`}
+          </p>
+        </div>
+      )}
+    </div>
   )
 }
