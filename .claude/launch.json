@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "denway",
+      "name": "denway-v2",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3018
