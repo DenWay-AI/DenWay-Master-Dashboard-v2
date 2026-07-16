@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase/server'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(req: Request) {
   const supabase = createServerClient()
   const { searchParams } = new URL(req.url)

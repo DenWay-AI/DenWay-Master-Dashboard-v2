@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase/server'
 import { DENWAY_STRATEGY_CALENDAR_IDS } from '@/config/env'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(req: Request) {
   const supabase = createServerClient()
   const { searchParams } = new URL(req.url)
