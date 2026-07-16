@@ -144,14 +144,21 @@ body {
 /* ── Tabular nums ───────────────────────────────────── */
 .tnum { font-variant-numeric: tabular-nums; }
 
-/* ── Stagger delays ─────────────────────────────────── */
-.delay-1 { animation-delay: 55ms; }
-.delay-2 { animation-delay: 110ms; }
-.delay-3 { animation-delay: 165ms; }
-.delay-4 { animation-delay: 220ms; }
-.delay-5 { animation-delay: 275ms; }
-.delay-6 { animation-delay: 330ms; }
-.delay-7 { animation-delay: 385ms; }
+/* ── Fade-in-up (Regas pattern) ─────────────────────── */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-in { animation: fade-in-up 0.35s ease-out both; }
+
+/* ── Stagger delays (used by both .animate-in and legacy .animate-fade-up) */
+.delay-1 { animation-delay: 50ms; }
+.delay-2 { animation-delay: 100ms; }
+.delay-3 { animation-delay: 150ms; }
+.delay-4 { animation-delay: 200ms; }
+.delay-5 { animation-delay: 250ms; }
+.delay-6 { animation-delay: 300ms; }
+.delay-7 { animation-delay: 350ms; }
 
 /* ── Table ───────────────────────────────────────────── */
 .table-glass {

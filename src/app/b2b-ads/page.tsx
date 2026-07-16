@@ -3,8 +3,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import DateRangePicker from '@/components/DateRangePicker'
 import LoadingState from '@/components/ui/LoadingState'
-import { PageHeader, PageBody } from '@/components/ui/PageHeader'
-import KPICard from '@/components/ui/KPICard'
 import { Modal, ModalHeader, ModalBody, ModalCloseButton } from '@/components/ui/Modal'
 import {
   fmtCurrency, fmtCurrencyDec, fmtInt, fmtPct, fmtRateInt,
@@ -146,40 +144,35 @@ function fmtSynced(iso: string | null): string {
   return `${Math.round(hrs / 24)}d ago`
 }
 
-// ── KPI strip ─────────────────────────────────────────────────────────────────
+// ── KPI grid (Regas pattern: 6 big glass cards, each with sub-line) ──────────
 
-function KpiStrip({ t }: { t: AdMetrics }) {
-  const items = [
-    { label: 'Ad Spend',       value: fmtCurrency(t.spend),               group: 'delivery' },
-    { label: 'Leads (CRM)',    value: fmtInt(t.leads),                    group: 'leads' },
-    { label: 'Cost / Lead',    value: fmtCurrencyDec(t.cpl),              group: 'leads' },
-    { label: 'Booked Calls',   value: fmtInt(t.booked),                   group: 'booking' },
-    { label: 'Lead → Book',    value: t.leadToBookRate != null ? fmtRateInt(t.leadToBookRate) : '—', group: 'booking' },
-    { label: 'Cost / Booking', value: fmtCurrencyDec(t.costPerBooking),   group: 'booking' },
-    { label: 'Shows',          value: fmtInt(t.shows),                    group: 'show' },
-    { label: 'Show Rate',      value: t.showRate != null ? fmtRateInt(t.showRate) : '—', group: 'show' },
-    { label: 'Qualified',      value: fmtInt(t.qualified),                group: 'qualify' },
-    { label: 'Cost / Qual.',   value: fmtCurrencyDec(t.costPerQualified), group: 'qualify' },
-    { label: 'Closed',         value: fmtInt(t.closed),                   group: 'revenue' },
-    { label: 'Cash Collected', value: fmtCurrency(t.cashCollected),       group: 'revenue' },
-    { label: 'Revenue',        value: fmtCurrency(t.contractRevenue),     group: 'revenue' },
-    { label: 'ROAS',           value: t.roas != null ? `${t.roas.toFixed(2)}×` : '—', group: 'revenue' },
+function KpiGrid({ t }: { t: AdMetrics }) {
+  const items: { label: string; value: string; sub?: string }[] = [
+    { label: 'Ad Spend',       value: fmtCurrency(t.spend) },
+    { label: 'Leads',          value: fmtInt(t.leads),        sub: `CPL ${fmtCurrencyDec(t.cpl)}` },
+    { label: 'Booked Calls',   value: fmtInt(t.booked),       sub: `${fmtCurrencyDec(t.costPerBooking)} per booking` },
+    { label: 'Shows',          value: fmtInt(t.shows),        sub: t.showRate != null ? `${fmtRateInt(t.showRate)} show rate` : undefined },
+    { label: 'Closes',         value: fmtInt(t.closed),       sub: t.closeRate != null ? `${fmtRateInt(t.closeRate)} close rate` : undefined },
+    { label: 'Cash Collected', value: fmtCurrency(t.cashCollected), sub: t.roas != null ? `ROAS ${t.roas.toFixed(2)}×` : undefined },
   ]
 
   return (
-    <div className="mb-6 grid grid-cols-4 gap-3 sm:grid-cols-7 lg:grid-cols-7">
-      {items.map(item => {
-        const g = GROUP_STYLES[item.group]
-        return (
-          <KPICard
-            key={item.label}
-            label={item.label}
-            value={item.value}
-            size="sm"
-            valueColor={g.color !== 'var(--ink-faint)' ? g.color : undefined}
-          />
-        )
-      })}
+    <div className="kpi-grid">
+      {items.map(it => (
+        <div key={it.label} className="glass-card glass-card-lift" style={{ padding: '20px 20px' }}>
+          <span className="kpi-label">{it.label}</span>
+          <div className="kpi-value" style={{ marginTop: 12 }}>{it.value}</div>
+          {it.sub && (
+            <span style={{
+              display: 'block', marginTop: 6,
+              fontSize: '0.6875rem', color: 'var(--ink-muted)',
+              letterSpacing: '0.04em',
+            }}>
+              {it.sub}
+            </span>
+          )}
+        </div>
+      ))}
     </div>
   )
 }
@@ -768,35 +761,33 @@ export default function B2BAdsPage() {
 
   return (
     <>
-      <PageHeader
-        title="B2B Ads Tracker"
-        subtitle="Full funnel breakdown · per ad, ad set, or campaign"
-        actions={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: '0.7rem', color: 'var(--ink-faint)' }}>Synced {syncedLabel}</span>
-            {/* View by toggle */}
-            <div style={{ display: 'flex', gap: 4 }}>
-              {(['ad', 'adset', 'campaign'] as const).map(v => {
-                const isOn = v === viewBy
-                const label = v === 'ad' ? 'Ad' : v === 'adset' ? 'Ad Set' : 'Campaign'
-                return (
-                  <button
-                    key={v}
-                    onClick={() => setViewBy(v)}
-                    style={{
-                      fontSize: '0.625rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5,
-                      cursor: 'pointer', letterSpacing: '0.08em', textTransform: 'uppercase',
-                      border: `1px solid ${isOn ? '#34d399' : 'var(--line)'}`,
-                      background: isOn ? 'rgba(52,211,153,0.12)' : 'transparent',
-                      color: isOn ? '#34d399' : 'var(--ink-faint)',
-                      transition: 'all 100ms',
-                    }}
-                  >{label}</button>
-                )
-              })}
-            </div>
-            {/* Date presets */}
-            <div style={{ display: 'flex', gap: 4 }}>
+      <div style={{ padding: '2rem', maxWidth: '1600px', margin: '0 auto' }}>
+
+        {/* Page title */}
+        <div className="animate-in" style={{ marginBottom: '1.5rem' }}>
+          <h1 style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: '1.5rem',
+            fontWeight: 700,
+            letterSpacing: '-0.02em',
+            color: 'var(--ink)',
+          }}>B2B Ads Tracker</h1>
+          <p style={{ fontSize: '0.8125rem', color: 'var(--ink-muted)', marginTop: '0.25rem' }}>
+            UTM-tracked, per-ad: attribution from Meta ad → GHL contact → sales tracker outcome
+          </p>
+        </div>
+
+        {/* Filter row */}
+        <div className="animate-in delay-1" style={{
+          display: 'flex', gap: '1rem', alignItems: 'flex-end',
+          marginBottom: '1.5rem', flexWrap: 'wrap',
+        }}>
+          <DateRangePicker from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
+
+          {/* Date presets */}
+          <div>
+            <label className="label-dark">Range</label>
+            <div style={{ display: 'flex', border: '1px solid var(--line-strong)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
               {datePresets().map(p => {
                 const active = p.from === dateFrom && p.to === dateTo
                 return (
@@ -804,74 +795,111 @@ export default function B2BAdsPage() {
                     key={p.label}
                     onClick={() => { setDateFrom(p.from); setDateTo(p.to) }}
                     style={{
-                      fontSize: '0.625rem', fontWeight: 700, padding: '3px 8px', borderRadius: 5,
-                      cursor: 'pointer', letterSpacing: '0.08em', textTransform: 'uppercase',
-                      border: `1px solid ${active ? 'var(--accent)' : 'var(--line)'}`,
-                      background: active ? 'rgba(139,92,246,0.15)' : 'transparent',
-                      color: active ? 'var(--accent)' : 'var(--ink-faint)',
-                      transition: 'all 100ms',
+                      padding: '0.5rem 0.75rem', fontSize: '0.75rem', border: 'none', cursor: 'pointer',
+                      background: active ? 'var(--accent-soft)' : 'transparent',
+                      color: active ? 'var(--accent)' : 'var(--ink-muted)',
+                      fontWeight: active ? 600 : 400,
+                      letterSpacing: '0.04em', textTransform: 'uppercase',
                     }}
                   >{p.label}</button>
                 )
               })}
             </div>
-            <DateRangePicker from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
           </div>
-        }
-      />
 
-      <PageBody>
-        {loading ? <LoadingState center /> : !data ? (
+          {/* Level (Campaign / Ad Set / Ad) */}
+          <div>
+            <label className="label-dark">Level</label>
+            <div style={{ display: 'flex', border: '1px solid var(--line-strong)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+              {(['campaign', 'adset', 'ad'] as const).map(v => {
+                const isOn = v === viewBy
+                const label = v === 'ad' ? 'Ads' : v === 'adset' ? 'Ad Sets' : 'Campaigns'
+                return (
+                  <button
+                    key={v}
+                    onClick={() => setViewBy(v)}
+                    style={{
+                      padding: '0.5rem 0.875rem', fontSize: '0.8125rem', border: 'none', cursor: 'pointer',
+                      background: isOn ? 'var(--accent-soft)' : 'transparent',
+                      color: isOn ? 'var(--accent)' : 'var(--ink-muted)',
+                      fontWeight: isOn ? 600 : 400,
+                    }}
+                  >{label}</button>
+                )
+              })}
+            </div>
+          </div>
+
+          <span style={{ fontSize: '0.7rem', color: 'var(--ink-faint)', marginLeft: 'auto', marginBottom: 8 }}>
+            Synced {syncedLabel}
+          </span>
+        </div>
+
+        {loading ? (
+          <LoadingState center />
+        ) : !data ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-faint)', fontSize: '0.875rem' }}>Failed to load</div>
         ) : (
           <>
-            {/* KPI strip */}
-            <section className="animate-fade-up" style={{ marginBottom: 28 }}>
-              <KpiStrip t={data.totals} />
-            </section>
+            {/* KPI grid */}
+            <div className="animate-in delay-2" style={{ marginBottom: '1.5rem' }}>
+              <KpiGrid t={data.totals} />
+            </div>
 
-            {/* Active ads */}
-            <section className="animate-fade-up delay-1" style={{ marginBottom: 28 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            {/* Active ads — wrapped in glass card */}
+            <div className="animate-in delay-3 glass-card" style={{ marginBottom: '1.5rem', padding: 0, overflow: 'hidden' }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '0.875rem 1.25rem', borderBottom: '1px solid var(--line)',
+              }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#22c55e' }} />
-                  <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--ink-faint)' }}>
-                    Active Ads
-                  </span>
+                  <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--positive)' }} />
+                  <span className="section-title" style={{ fontSize: '0.9375rem' }}>Active {viewBy === 'ad' ? 'Ads' : viewBy === 'adset' ? 'Ad Sets' : 'Campaigns'}</span>
                 </div>
                 <span style={{ fontSize: '0.75rem', color: 'var(--ink-faint)' }}>
-                  {active.length} {viewBy === 'ad' ? 'ad' : viewBy === 'adset' ? 'ad set' : 'campaign'}{active.length !== 1 ? 's' : ''}
+                  {active.length} row{active.length !== 1 ? 's' : ''}
                 </span>
               </div>
-              <FlatTable rows={active} viewBy={viewBy} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} onAdClick={setSelectedAd} visibleCols={visibleCols} hideDeliveryDetail={hideDeliveryDetail} onToggleDelivery={() => setHideDeliveryDetail(v => !v)} />
-            </section>
+              <div style={{ overflowX: 'auto' }}>
+                <FlatTable rows={active} viewBy={viewBy} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} onAdClick={setSelectedAd} visibleCols={visibleCols} hideDeliveryDetail={hideDeliveryDetail} onToggleDelivery={() => setHideDeliveryDetail(v => !v)} />
+              </div>
+            </div>
 
             {/* Past / off ads */}
             {past.length > 0 && (
-              <section className="animate-fade-up delay-2">
+              <div className="animate-in delay-4 glass-card" style={{ padding: 0, overflow: 'hidden' }}>
                 <div
                   onClick={() => setPastOpen(v => !v)}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: pastOpen ? 8 : 0, cursor: 'pointer', userSelect: 'none' }}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '0.875rem 1.25rem',
+                    borderBottom: pastOpen ? '1px solid var(--line)' : 'none',
+                    cursor: 'pointer', userSelect: 'none',
+                  }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.2)' }} />
-                    <span style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--ink-faint)' }}>
-                      Past / Off Ads
-                    </span>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--accent)', transition: 'transform 150ms', display: 'inline-block', transform: pastOpen ? 'rotate(90deg)' : 'none' }}>▶</span>
+                    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'rgba(255,255,255,0.2)' }} />
+                    <span className="section-title" style={{ fontSize: '0.9375rem', color: 'var(--ink-muted)' }}>Past / Off {viewBy === 'ad' ? 'Ads' : viewBy === 'adset' ? 'Ad Sets' : 'Campaigns'}</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--accent)', transition: 'transform 150ms', display: 'inline-block', transform: pastOpen ? 'rotate(90deg)' : 'none' }}>▶</span>
                   </div>
                   <span style={{ fontSize: '0.75rem', color: 'var(--ink-faint)' }}>
-                    {past.length} {viewBy === 'ad' ? 'ad' : viewBy === 'adset' ? 'ad set' : 'campaign'}{past.length !== 1 ? 's' : ''}
+                    {past.length} row{past.length !== 1 ? 's' : ''}
                   </span>
                 </div>
                 {pastOpen && (
-                  <FlatTable rows={past} viewBy={viewBy} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} onAdClick={setSelectedAd} dim visibleCols={visibleCols} hideDeliveryDetail={hideDeliveryDetail} onToggleDelivery={() => setHideDeliveryDetail(v => !v)} />
+                  <div style={{ overflowX: 'auto' }}>
+                    <FlatTable rows={past} viewBy={viewBy} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} onAdClick={setSelectedAd} dim visibleCols={visibleCols} hideDeliveryDetail={hideDeliveryDetail} onToggleDelivery={() => setHideDeliveryDetail(v => !v)} />
+                  </div>
                 )}
-              </section>
+              </div>
             )}
+
+            <p className="animate-in delay-5" style={{ fontSize: '0.6875rem', color: 'var(--ink-muted)', marginTop: '1rem' }}>
+              Leads, bookings, closes and cash are attributed via UTM parameters on each ad → GHL contact → sales tracker.
+            </p>
           </>
         )}
-      </PageBody>
+      </div>
 
       {selectedAd && (
         <AdDetailModal
